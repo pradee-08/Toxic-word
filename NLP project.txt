@@ -1,0 +1,67 @@
+import numpy as np 
+import pandas as pd 
+
+train_data = pd.read_csv('/content/train.csv.zip')
+test_data = pd.read_csv('/content/test.csv.zip')
+
+train_data.head()
+
+train_data['text'] = train_data.comment_text.apply(lambda x: x.replace('\n', ' '))
+test_data['text'] = test_data.comment_text.apply(lambda x: x.replace('\n', ' '))
+
+cats = ['toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+train_prepared_data = []
+
+def format_text_spacy(text):
+    return (text.text, {'cats': {cat: text[cat] for cat in cats}})
+    
+for i in range(0,len(train_data)):
+    text = train_data.iloc[i]
+    train_prepared_data.append(format_text_spacy(text))
+
+train_prepared_data[0:5]
+
+import spacy
+from spacy.util import minibatch, compounding
+from spacy.training import Example
+import random
+
+nlp = spacy.blank("en")
+textcat = nlp.add_pipe("textcat_multilabel")
+textcat.add_label("toxic")
+textcat.add_label("severe_toxic")
+textcat.add_label("obscene")
+textcat.add_label("threat")
+textcat.add_label("insult")
+textcat.add_label("identity_hate")
+
+other_pipes = [pipe for pipe in nlp.pipe_names if pipe != 'textcat_multilabel']
+with nlp.disable_pipes(*other_pipes):  # only train textcat
+    optimizer = nlp.begin_training()
+    print("Training the model...")
+    for epoch in range(10):
+        losses = {}
+        batches = minibatch(train_prepared_data[0:10000], size=compounding(4.0, 32.0, 1.001))
+        for batch in batches:
+            examples = []
+            for text, annot in batch:
+                examples.append(Example.from_dict(nlp.make_doc(text), annot))
+            nlp.update(examples, sgd=optimizer, drop=0.2, losses=losses)
+        print("Epoch: {} Loss: {}".format(epoch+1, losses))
+
+test = nlp("Never be rude with girls")
+
+test.cats
+
+submission = test_data[['id']]
+for cat in cats:
+    submission[cat] = 0
+
+for i in range(0,len(test_data)):
+    cats_probas = nlp(train_data.iloc[i].text).cats
+    for key in cats_probas.keys():
+        submission.loc[i,key] = cats_probas[key]
+
+submission.head()
+
+submission.to_csv('submission.csv', index=False)
